@@ -10,8 +10,22 @@ const attemptRoutes = require('./routes/attemptRoutes');
 const authRoutes = require('./routes/authRoutes');
 const { notFoundHandler, errorHandler } = require('./middleware/errorMiddleware');
 const ApiResponse = require('./utils/apiResponse');
+const { connectDB } = require('./config/db');
+const mongoose = require('mongoose');
 
 const app = express();
+
+// Ensure DB is connected for serverless invocations (e.g. on Vercel)
+app.use(async (req, res, next) => {
+  try {
+    if (mongoose.connection.readyState === 0) {
+      await connectDB();
+    }
+    next();
+  } catch (err) {
+    next(err);
+  }
+});
 
 // 1. Security Middleware
 app.use(helmet());

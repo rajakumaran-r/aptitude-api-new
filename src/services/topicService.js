@@ -3,11 +3,11 @@ const { getTopicQuestionModel } = require('../models/questionModel');
 const { topicRegistry, toCollectionName, toSlug, DISPLAY_NAMES } = require('../config/topicRegistry');
 const ApiError = require('../utils/apiError');
 
+let topicsCache = null;
+let lastCacheTime = 0;
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes cache
+
 class TopicService {
-  /**
-   * Discovers all active topic collections directly from MongoDB
-   * @returns {Promise<string[]>} List of collection names
-   */
   async _getLiveCollectionNames() {
     if (mongoose.connection && mongoose.connection.readyState === 1 && mongoose.connection.db) {
       try {
@@ -20,24 +20,31 @@ class TopicService {
           return names;
         }
       } catch (err) {
-        // Fall back to registry baseline if listCollections fails
+        // Fall back to registry baseline
       }
     }
     return topicRegistry.getAllCollectionNames();
   }
 
   /**
-   * Get all topics directly from MongoDB with live question and pattern counts
+   * Get all topics with question and pattern counts (cached for performance)
    */
   async getAllTopics() {
+    const now = Date.now();
+    if (topicsCache && now - lastCacheTime < CACHE_TTL_MS) {
+      return topicsCache;
+    }
+
     const collectionNames = await this._getLiveCollectionNames();
 
     const topicDetails = await Promise.all(
       collectionNames.map(async (collName) => {
         try {
           const Model = getTopicQuestionModel(collName);
-          const count = await Model.countDocuments();
-          const patterns = await Model.distinct('pattern');
+          const [count, patterns] = await Promise.all([
+            Model.countDocuments().catch(() => 0),
+            Model.distinct('pattern').catch(() => [])
+          ]);
 
           const topicMeta = topicRegistry.getTopic(collName) || {
             slug: toSlug(collName),
@@ -66,12 +73,14 @@ class TopicService {
       })
     );
 
+    if (topicDetails.length > 0) {
+      topicsCache = topicDetails;
+      lastCacheTime = now;
+    }
+
     return topicDetails;
   }
 
-  /**
-   * Get patterns belonging to a specific topic directly from its MongoDB collection
-   */
   async getTopicPatterns(topicSlug) {
     const topic = topicRegistry.getTopic(topicSlug);
     if (!topic) {
@@ -89,9 +98,6 @@ class TopicService {
     };
   }
 
-  /**
-   * Get question count for a specific topic directly from its collection
-   */
   async getTopicCount(topicSlug) {
     const topic = topicRegistry.getTopic(topicSlug);
     if (!topic) {
@@ -109,9 +115,6 @@ class TopicService {
     };
   }
 
-  /**
-   * Get question count for a specific pattern within a topic
-   */
   async getPatternCount(topicSlug, patternSlugOrName) {
     const topic = topicRegistry.getTopic(topicSlug);
     if (!topic) {
@@ -121,7 +124,6 @@ class TopicService {
     const Model = getTopicQuestionModel(topic.collectionName);
     const patterns = await Model.distinct('pattern');
 
-    // Find matching pattern in the database collection
     const target = (patternSlugOrName || '').trim().toLowerCase();
     const resolvedPattern = patterns.find(
       (p) => p.toLowerCase() === target || toSlug(p) === toSlug(target)
@@ -142,9 +144,6 @@ class TopicService {
     };
   }
 
-  /**
-   * Resolve topic and return its Mongoose model
-   */
   resolveTopicModel(topicSlug) {
     const topic = topicRegistry.getTopic(topicSlug);
     if (!topic) {
@@ -158,9 +157,6 @@ class TopicService {
     };
   }
 
-  /**
-   * Resolve a specific pattern within a topic collection
-   */
   async resolveTopicAndPattern(topicSlug, patternSlugOrName) {
     const topic = topicRegistry.getTopic(topicSlug);
     if (!topic) {
