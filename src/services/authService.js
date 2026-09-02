@@ -4,13 +4,14 @@ const logger = require('../utils/logger');
 
 class AuthService {
   async registerUser(data) {
-    const { userId, name, email, password, role = 'student' } = data;
+    const { userId, studentId, facultyId, id, name, email, password, role = 'student' } = data;
+    const resolvedId = userId || studentId || facultyId || id;
 
-    if (!userId || !name || !email || !password) {
+    if (!resolvedId || !name || !email || !password) {
       throw ApiError.badRequest('All fields (userId/ID, name, email, password) are required');
     }
 
-    const trimmedId = String(userId).trim();
+    const trimmedId = String(resolvedId).trim();
     const trimmedEmail = String(email).trim().toLowerCase();
 
     const existingUser = await User.findOne({
